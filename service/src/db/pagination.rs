@@ -1,16 +1,32 @@
 use sea_orm::{ConnectionTrait, Cursor, DbErr, SelectorTrait};
+use std::env;
 
 /// Hard ceiling on a single keyset page. Requests above this are clamped.
-pub const MAX_PAGE_LIMIT: u64 = 50;
-pub const DEFAULT_PAGE_LIMIT: u64 = 25;
+/// Override with the `MAX_PAGE_LIMIT` env var.
+pub fn max_page_limit() -> u64 {
+	env_u64("MAX_PAGE_LIMIT", 2000)
+}
 
-/// Clamp a requested page limit into `[1, MAX_PAGE_LIMIT]`, substituting
-/// [`DEFAULT_PAGE_LIMIT`] for an absent or zero value. Out-of-range values are
+/// Page size used when the caller omits `limit` or sends `0`. Override with the
+/// `DEFAULT_PAGE_LIMIT` env var.
+pub fn default_page_limit() -> u64 {
+	env_u64("DEFAULT_PAGE_LIMIT", 100)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+	env::var(key)
+		.ok()
+		.and_then(|v| v.trim().parse().ok())
+		.unwrap_or(default)
+}
+
+/// Clamp a requested page limit into `[1, max_page_limit()]`, substituting
+/// [`default_page_limit`] for an absent or zero value. Out-of-range values are
 /// clamped rather than rejected so a list endpoint never 400s on `limit` alone.
 pub fn clamp_page_limit(requested: Option<u64>) -> u64 {
 	match requested {
-		None | Some(0) => DEFAULT_PAGE_LIMIT,
-		Some(n) => n.min(MAX_PAGE_LIMIT),
+		None | Some(0) => default_page_limit(),
+		Some(n) => n.min(max_page_limit()),
 	}
 }
 
@@ -59,8 +75,8 @@ mod tests {
 
 	#[test]
 	fn clamp_substitutes_default_for_absent_or_zero() {
-		assert_eq!(clamp_page_limit(None), DEFAULT_PAGE_LIMIT);
-		assert_eq!(clamp_page_limit(Some(0)), DEFAULT_PAGE_LIMIT);
+		assert_eq!(clamp_page_limit(None), default_page_limit());
+		assert_eq!(clamp_page_limit(Some(0)), default_page_limit());
 	}
 
 	#[test]
@@ -68,7 +84,10 @@ mod tests {
 		assert_eq!(clamp_page_limit(Some(1)), 1);
 		assert_eq!(clamp_page_limit(Some(25)), 25);
 		assert_eq!(clamp_page_limit(Some(50)), 50);
-		assert_eq!(clamp_page_limit(Some(51)), MAX_PAGE_LIMIT);
-		assert_eq!(clamp_page_limit(Some(u64::MAX)), MAX_PAGE_LIMIT);
+		assert_eq!(
+			clamp_page_limit(Some(max_page_limit() + 1)),
+			max_page_limit()
+		);
+		assert_eq!(clamp_page_limit(Some(u64::MAX)), max_page_limit());
 	}
 }

@@ -184,10 +184,14 @@ async fn platforms_honor_with_total_and_clamp_limit() {
 	seed_platforms(&db, 3).await;
 	let app = test::init_service(build_app!(db)).await;
 
-	// limit=9999 must clamp to 50, never 400.
-	let (status, page) = get_json!(app, "/api/v2/platforms?limit=9999&withTotal=true");
+	// A request above the configured cap must clamp, never 400.
+	let cap = service::db::pagination::max_page_limit();
+	let (status, page) = get_json!(
+		app,
+		&format!("/api/v2/platforms?limit={}&withTotal=true", cap + 9999)
+	);
 	assert_eq!(status, 200);
-	assert_eq!(page["pagination"]["limit"], 50);
+	assert_eq!(page["pagination"]["limit"], cap);
 	let total = page["pagination"]["totalItems"].as_u64().unwrap();
 	assert!(
 		total >= 3,

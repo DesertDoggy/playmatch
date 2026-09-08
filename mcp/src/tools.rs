@@ -3,8 +3,8 @@ use redis::aio::MultiplexedConnection;
 use sea_orm::DatabaseConnection;
 use sea_orm::prelude::Uuid;
 use serde::Serialize;
-use service::bulk::BULK_CONCURRENCY;
-pub use service::bulk::MAX_BULK_ITEMS;
+use service::bulk::bulk_concurrency;
+pub use service::bulk::max_bulk_items;
 use service::cache::CacheStatus;
 use service::db::dat_file::DatFileBrowseFilters;
 use service::entities::dat_file::{
@@ -328,7 +328,7 @@ pub async fn bulk_identify_json(
 					(index, item.key, outcome)
 				}
 			})
-			.buffer_unordered(BULK_CONCURRENCY)
+			.buffer_unordered(bulk_concurrency())
 			.collect()
 			.await;
 

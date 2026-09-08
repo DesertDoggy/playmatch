@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-pub use service::bulk::MAX_BULK_ITEMS;
+pub use service::bulk::max_bulk_items;
 use service::model::GameFileMatchSearch;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub struct BulkIdentifyItem {
 	pub key: Option<String>,
 }
 
-/// Bulk identify request body. Up to 100 items per request.
+/// Bulk identify request body. Up to the configured cap per request (see `MAX_BULK_ITEMS`).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BulkIdentifyRequest {
 	pub items: Vec<BulkIdentifyItem>,
@@ -157,7 +157,7 @@ pub fn validate_batch_size(len: usize) -> BatchValidation {
 	if len == 0 {
 		return BatchValidation::Empty;
 	}
-	if len > MAX_BULK_ITEMS {
+	if len > max_bulk_items() {
 		return BatchValidation::TooLarge { received: len };
 	}
 	BatchValidation::Ok
@@ -197,11 +197,11 @@ pub fn validate_keys(items: &[BulkIdentifyItem]) -> Result<(), (usize, BulkItemE
 	Ok(())
 }
 
-/// Bulk get-by-id request body. Up to 100 ids per request, correlated by id, so
-/// no caller key is needed.
+/// Bulk get-by-id request body. Up to the configured cap per request (see
+/// `MAX_BULK_ITEMS`), correlated by id, so no caller key is needed.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BulkIdsRequest {
-	/// The ids to look up. Up to 100 per request; duplicate ids are resolved once.
+	/// The ids to look up. Up to the configured cap per request; duplicate ids are resolved once.
 	pub ids: Vec<Uuid>,
 }
 
@@ -436,15 +436,15 @@ mod tests {
 
 	#[test]
 	fn batch_at_the_cap_is_accepted() {
-		assert_eq!(validate_batch_size(MAX_BULK_ITEMS), BatchValidation::Ok);
+		assert_eq!(validate_batch_size(max_bulk_items()), BatchValidation::Ok);
 	}
 
 	#[test]
 	fn batch_above_the_cap_reports_received_count() {
 		assert_eq!(
-			validate_batch_size(MAX_BULK_ITEMS + 1),
+			validate_batch_size(max_bulk_items() + 1),
 			BatchValidation::TooLarge {
-				received: MAX_BULK_ITEMS + 1
+				received: max_bulk_items() + 1
 			}
 		);
 	}

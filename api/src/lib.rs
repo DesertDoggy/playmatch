@@ -363,8 +363,14 @@ async fn start() -> anyhow::Result<()> {
 
 	let serv = HttpServer::new(move || {
 		let mut app = App::new()
-			.app_data(JsonConfig::default().limit(64 * 1024))
-			.app_data(PayloadConfig::default().limit(256 * 1024))
+			.app_data(JsonConfig::default().limit(env_body_limit_bytes(
+				"API_JSON_BODY_LIMIT_BYTES",
+				8 * 1024 * 1024,
+			)))
+			.app_data(PayloadConfig::default().limit(env_body_limit_bytes(
+				"API_PAYLOAD_LIMIT_BYTES",
+				16 * 1024 * 1024,
+			)))
 			.app_data(conn_data.clone())
 			.app_data(redis_client_data.clone())
 			.app_data(redis_conn_data.clone());
@@ -992,15 +998,26 @@ fn build_igdb_client(
 
 /// Builds the rate-limiter config used by the public API scopes. Exposed for
 /// integration tests so they can construct the version scopes exactly as the
-/// running server does without naming internal extractor types.
+/// running server does without naming internal extractor types. `RATE_LIMIT_BURST_SIZE`
+/// (default 200) and `RATE_LIMIT_MS_PER_REQUEST` (default 20, i.e. 50 req/s
+/// sustained) override the defaults for self-hosted deployments that want
+/// looser per-IP limits.
 #[doc(hidden)]
 pub fn public_api_governor_config()
 -> GovernorConfig<ReverProxyExtractor, StateInformationMiddleware> {
+	let burst_size = env::var("RATE_LIMIT_BURST_SIZE")
+		.ok()
+		.and_then(|v| v.trim().parse().ok())
+		.unwrap_or(200u32);
+	let ms_per_request = env::var("RATE_LIMIT_MS_PER_REQUEST")
+		.ok()
+		.and_then(|v| v.trim().parse().ok())
+		.unwrap_or(20u64);
 	GovernorConfigBuilder::default()
 		.use_headers()
-		.milliseconds_per_request(250)
+		.milliseconds_per_request(ms_per_request)
 		.key_extractor(ReverProxyExtractor)
-		.burst_size(20)
+		.burst_size(burst_size)
 		.finish()
 		.expect("governor config is valid by construction")
 }
@@ -1100,15 +1117,26 @@ fn configure_version_routes(cfg: &mut ServiceConfig, version: ApiVersion, flags:
 	}
 }
 
-/// The 256 KiB JsonConfig for the v2 bulk endpoints, with an error handler that
+/// Parses a byte-size limit from an env var, falling back to `default` when the
+/// var is absent or not a valid `usize`.
+fn env_body_limit_bytes(key: &str, default: usize) -> usize {
+	env::var(key)
+		.ok()
+		.and_then(|v| v.trim().parse().ok())
+		.unwrap_or(default)
+}
+
+/// The v2 bulk endpoints' JsonConfig, with an error handler that
 /// turns a malformed, mistyped, or oversized JSON body into the v2 `V2ErrorBody`
 /// envelope. Scoped to the v2 surface only; v1 keeps the global plain-text
 /// JsonConfig. Every `JsonPayloadError` (deserialize failure, wrong content type,
 /// or overflow past the cap) maps to a single `malformed_body` 400 so a bad bulk
-/// body never reaches the client as actix's default plain-text error.
+/// body never reaches the client as actix's default plain-text error. The cap
+/// defaults to 16 MiB and can be raised via `API_V2_JSON_BODY_LIMIT_BYTES` to
+/// match a larger `MAX_BULK_ITEMS`.
 fn v2_json_config() -> JsonConfig {
 	JsonConfig::default()
-		.limit(256 * 1024)
+		.limit(env_body_limit_bytes("API_V2_JSON_BODY_LIMIT_BYTES", 16 * 1024 * 1024))
 		.error_handler(|err, _req| {
 			let response = crate::routes::v2::error::v2_malformed_body(err.to_string());
 			actix_web::error::InternalError::from_response(err, response).into()
@@ -1124,10 +1152,10 @@ fn configure_public_api_routes_v2(cfg: &mut ServiceConfig, flags: PublicRouteFla
 	// Everything mounts inside ONE empty-prefix scope. An actix `scope("")` matches
 	// every path, so a sibling empty scope registered ahead of other services
 	// swallows their requests and 404s them; a single scope avoids that. It also
-	// carries the larger 256 KiB JsonConfig so a full bulk batch (up to 100 items
-	// with hashes) clears the global 64 KiB body limit, which stays untouched
-	// elsewhere. Each bulk batch still counts as one request against the version
-	// scope's shared Governor.
+	// carries the larger v2 JsonConfig (see `v2_json_config`) so a full bulk batch
+	// clears the smaller global v1 body limit, which stays untouched elsewhere.
+	// Each bulk batch still counts as one request against the version scope's
+	// shared Governor.
 	//
 	// Literal paths (`/games/bulk`, `/games/search`, `/games/by-name`, the
 	// `/games/{id}/...` sub-resources, `/companies/search`, `/platforms/search`,

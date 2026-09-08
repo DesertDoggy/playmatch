@@ -286,16 +286,17 @@ async fn over_cap_batch_is_rejected_with_header() {
 	let (_redis, redis) = start_redis().await;
 	let app = test::init_service(build_app!(db, redis)).await;
 
-	let ids: Vec<String> = (0..101)
+	let cap = service::bulk::max_bulk_items();
+	let ids: Vec<String> = (0..=cap)
 		.map(|i| format!("00000000-0000-0000-0000-{i:012}"))
 		.collect();
 	let (status, max_items, value) =
 		post_json!(app, "/api/v2/companies/bulk", &json!({ "ids": ids }));
 
 	assert_eq!(status, 400);
-	assert_eq!(max_items.as_deref(), Some("100"));
+	assert_eq!(max_items.as_deref(), Some(cap.to_string().as_str()));
 	assert_eq!(value["code"], "batch_too_large");
-	assert_eq!(value["limit"], 100);
-	assert_eq!(value["received"], 101);
+	assert_eq!(value["limit"], cap);
+	assert_eq!(value["received"], cap + 1);
 	assert!(value["message"].is_string());
 }

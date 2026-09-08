@@ -13,7 +13,7 @@ use serde::Deserialize;
 use service::entities::dat_file::HashLookup;
 
 use crate::tools;
-use crate::tools::{BulkIdentifyItem, MAX_BULK_ITEMS};
+use crate::tools::{BulkIdentifyItem, max_bulk_items};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdentifyRomArgs {
@@ -573,7 +573,7 @@ impl PlaymatchMcp {
 	}
 
 	#[tool(
-		description = "Identify a batch of game files by hash or name+size in one call, returning a per-item result with a summary. At most 100 items per request; each item may carry an optional key (unique within the batch) echoed back for correlation. Per-item status is ok (cascade ran, match may be NoMatch), invalid (failed validation) or error (per-item failure); the batch still succeeds. Mirrors playmatch_identify_rom_by_hash per item."
+		description = "Identify a batch of game files by hash or name+size in one call, returning a per-item result with a summary. Capped at the server's configured bulk item limit; each item may carry an optional key (unique within the batch) echoed back for correlation. Per-item status is ok (cascade ran, match may be NoMatch), invalid (failed validation) or error (per-item failure); the batch still succeeds. Mirrors playmatch_identify_rom_by_hash per item."
 	)]
 	async fn playmatch_bulk_identify(
 		&self,
@@ -582,9 +582,10 @@ impl PlaymatchMcp {
 		if args.items.is_empty() {
 			return Ok(bad_input("items must not be empty"));
 		}
-		if args.items.len() > MAX_BULK_ITEMS {
+		if args.items.len() > max_bulk_items() {
 			return Ok(bad_input(format!(
-				"batch exceeds the {MAX_BULK_ITEMS}-item cap"
+				"batch exceeds the {}-item cap",
+				max_bulk_items()
 			)));
 		}
 
@@ -643,7 +644,8 @@ impl ServerHandler for PlaymatchMcp {
 				 playmatch_list_dat_files and their games and files with playmatch_list_dat_file_games \
 				 and playmatch_get_game_files. playmatch_find_dats_containing_hash is the reverse \
 				 lookup from a hash to the dat files that carry it, and playmatch_bulk_identify runs \
-				 up to 100 identify cascades in one call. external_metadata entries are provider id \
+				 many identify cascades in one call, up to the server's configured bulk item limit. \
+				 external_metadata entries are provider id \
 				 mappings only; resolving them to full records needs the separate provider HTTP API, \
 				 so the ids are references, not dead ends.",
 			);

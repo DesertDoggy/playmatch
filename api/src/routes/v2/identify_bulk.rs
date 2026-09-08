@@ -1,7 +1,7 @@
 use crate::error;
 use crate::model::bulk::{
 	BatchValidation, BulkCache, BulkIdentifyItem, BulkIdentifyRequest, BulkIdentifyResponse,
-	BulkIdentifyResult, BulkIdentifySummary, BulkItemError, BulkItemStatus, MAX_BULK_ITEMS,
+	BulkIdentifyResult, BulkIdentifySummary, BulkItemError, BulkItemStatus, max_bulk_items,
 	validate_batch_size, validate_keys,
 };
 use crate::routes::v2::error::{batch_too_large_response, v2_bad_request, v2_batch_error};
@@ -11,7 +11,7 @@ use futures_util::stream::{self, StreamExt};
 use redis::aio::MultiplexedConnection;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use service::bulk::BULK_CONCURRENCY;
+use service::bulk::bulk_concurrency;
 use service::cache::CacheStatus;
 use service::identification::{
 	identify_game_and_get_relations, identify_game_and_metadata_mappings,
@@ -198,12 +198,12 @@ where
 			return v2_batch_error(
 				"empty_batch",
 				"batch must contain at least one item",
-				MAX_BULK_ITEMS,
+				max_bulk_items(),
 				0,
 			);
 		}
 		BatchValidation::TooLarge { received } => {
-			return batch_too_large_response(MAX_BULK_ITEMS, received);
+			return batch_too_large_response(max_bulk_items(), received);
 		}
 		BatchValidation::Ok => {}
 	}
@@ -226,7 +226,7 @@ where
 					(index, item.key, outcome)
 				}
 			})
-			.buffer_unordered(BULK_CONCURRENCY)
+			.buffer_unordered(bulk_concurrency())
 			.collect()
 			.await;
 
@@ -237,16 +237,17 @@ where
 
 /// Identifies many game files in one request, returning metadata mappings.
 ///
-/// Each item is resolved by its file hashes or by filename and size. Up to 100
-/// items per request. A per-item failure does not fail the batch; it is reported
-/// on that item. The whole batch counts as one request against the rate limiter.
+/// Each item is resolved by its file hashes or by filename and size. Up to the
+/// configured cap per request (see `MAX_BULK_ITEMS`). A per-item failure does not
+/// fail the batch; it is reported on that item. The whole batch counts as one
+/// request against the rate limiter.
 #[utoipa::path(
 	post,
 	tag = "Identify",
 	request_body = BulkIdentifyRequest,
 	responses(
 		(status = 200, description = "Per-item identify results with a batch summary", body = BulkIdentifyIdsResponse),
-		(status = 400, description = "Empty batch, batch over the 100-item cap, or malformed body", body = V2ErrorBody)
+		(status = 400, description = "Empty batch, batch over the configured item cap, or malformed body", body = V2ErrorBody)
 	)
 )]
 #[post("/identify/bulk/ids")]
@@ -271,9 +272,10 @@ pub async fn identify_bulk_ids_v2(
 /// Identifies many game files in one request, returning full relations.
 ///
 /// Each item is resolved by its file hashes or by filename and size, with the
-/// matched game's relations on each result. Up to 100 items per request. A per-item
-/// failure does not fail the batch; it is reported on that item. The whole batch
-/// counts as one request against the rate limiter.
+/// matched game's relations on each result. Up to the configured cap per request
+/// (see `MAX_BULK_ITEMS`). A per-item failure does not fail the batch; it is
+/// reported on that item. The whole batch counts as one request against the
+/// rate limiter.
 ///
 /// `additionalMatches` is omitted on every item here to keep the batch cheap.
 /// Resolve the co-hashed siblings for a specific file through the single
@@ -284,7 +286,7 @@ pub async fn identify_bulk_ids_v2(
 	request_body = BulkIdentifyRequest,
 	responses(
 		(status = 200, description = "Per-item identify results with a batch summary", body = BulkIdentifyRelationsResponse),
-		(status = 400, description = "Empty batch, batch over the 100-item cap, or malformed body", body = V2ErrorBody)
+		(status = 400, description = "Empty batch, batch over the configured item cap, or malformed body", body = V2ErrorBody)
 	)
 )]
 #[post("/identify/bulk/relations")]

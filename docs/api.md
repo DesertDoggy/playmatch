@@ -43,8 +43,9 @@ Swagger UI is at `/swagger-ui/` with three tabs: v2 (primary), v1, and the alias
 
 All v2 list endpoints use keyset (cursor) pagination.
 
-* `limit` is clamped to `[1, 50]`. Absent or `0` falls back to `25`. Out-of-range
-  values are clamped, never rejected with a 400.
+* `limit` is clamped to `[1, MAX_PAGE_LIMIT]` (default 2000). Absent or `0` falls
+  back to `DEFAULT_PAGE_LIMIT` (default 100). Out-of-range values are clamped,
+  never rejected with a 400.
 * `cursor` is an opaque base64url string with no padding. Absent or empty starts
   at page 1.
 * `withTotal` is honored only on platforms and signature-groups. It is ignored
@@ -56,7 +57,7 @@ Responses are wrapped in a fixed envelope:
 {
   "data": [],
   "pagination": {
-    "limit": 25,
+    "limit": 100,
     "hasNextPage": false,
     "hasPreviousPage": false,
     "nextCursor": null,
@@ -89,14 +90,32 @@ Eight v2 endpoints accept a batch in one request:
 * `POST /api/v2/identify/bulk/ids`
 * `POST /api/v2/identify/bulk/relations`
 
-`MAX_BULK_ITEMS` is 100 per request and the JSON body is capped at 256 KiB. Each
-bulk request counts as exactly one request against the per-IP rate limiter, no
-matter how many items it carries. A request over the cap returns `400` with an
-`X-Bulk-Max-Items: 100` header.
+`MAX_BULK_ITEMS` defaults to 5000 per request and the JSON body is capped at
+`API_V2_JSON_BODY_LIMIT_BYTES` (default 16 MiB). Each bulk request counts as
+exactly one request against the per-IP rate limiter, no matter how many items
+it carries. A request over the cap returns `400` with an `X-Bulk-Max-Items`
+header echoing the configured cap.
 
 Partial failures do not fail the batch. The response stays `200` and reports a
 per-item result (`ok`/`notFound` for get-by-id, or `ok`/`invalid`/`error` for
 identify) for each entry.
+
+### Self-hosting: tuning limits
+
+The defaults above (and the pagination and rate-limiter defaults elsewhere in
+this doc) are process-wide fallbacks read once per request/response; every one
+of them can be overridden with an env var, no rebuild required:
+
+* `MAX_BULK_ITEMS` (default 5000) - item cap per bulk request.
+* `BULK_CONCURRENCY` (default 64) - per-batch fan-out against the DB/cache pools.
+* `MAX_PAGE_LIMIT` (default 2000) / `DEFAULT_PAGE_LIMIT` (default 100) - list
+  pagination bounds.
+* `RATE_LIMIT_BURST_SIZE` (default 200) / `RATE_LIMIT_MS_PER_REQUEST` (default
+  20, i.e. 50 req/s sustained) - per-IP Governor rate limit.
+* `API_JSON_BODY_LIMIT_BYTES` (default 8 MiB) - v1 JSON body cap.
+* `API_PAYLOAD_LIMIT_BYTES` (default 16 MiB) - raw payload cap (both versions).
+* `API_V2_JSON_BODY_LIMIT_BYTES` (default 16 MiB) - v2 bulk endpoints' JSON body cap.
+
 
 ### Authentication
 
@@ -190,4 +209,4 @@ The server exposes these 18 tools:
 * `playmatch_search_games_by_name` - fuzzy game search by human title when you
   have no hash; returns candidate ids, names, and platforms.
 * `playmatch_find_dats_containing_hash` - find the DAT files that contain a hash.
-* `playmatch_bulk_identify` - identify many ROMs in one call (capped at 100 items).
+* `playmatch_bulk_identify` - identify many ROMs in one call (capped at `MAX_BULK_ITEMS`, default 5000).

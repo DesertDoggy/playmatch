@@ -7,13 +7,28 @@ use service::model::{
 	CompanyMetadataResponse, GameMetadataResponse, GameNameSearchResultV2,
 	PlatformMetadataResponse, PlaymatchGameFileV2, PlaymatchSignatureGroupV2,
 };
+use std::env;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 /// Hard ceiling on a single page. Requests above this are clamped, never rejected.
-pub const MAX_PAGE_LIMIT: u64 = 50;
-/// Page size used when the client omits `limit` or sends `0`.
-pub const DEFAULT_PAGE_LIMIT: u64 = 25;
+/// Override with the `MAX_PAGE_LIMIT` env var.
+pub fn max_page_limit() -> u64 {
+	env_u64("MAX_PAGE_LIMIT", 2000)
+}
+
+/// Page size used when the client omits `limit` or sends `0`. Override with the
+/// `DEFAULT_PAGE_LIMIT` env var.
+pub fn default_page_limit() -> u64 {
+	env_u64("DEFAULT_PAGE_LIMIT", 100)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+	env::var(key)
+		.ok()
+		.and_then(|v| v.trim().parse().ok())
+		.unwrap_or(default)
+}
 
 /// Wire format version of the cursor payload. Bump this when the byte layout
 /// changes. A cursor carrying an unrecognized version is not an error: callers
@@ -99,8 +114,8 @@ pub struct PageMeta {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct PageParams {
-	/// Page size. Ranges from 1 to 50. Defaults to 25 when omitted or `0`. Values above 50 are clamped, never rejected.
-	#[param(required = false, minimum = 1, maximum = 50)]
+	/// Page size. Ranges from 1 to 2000 by default (see `MAX_PAGE_LIMIT`). Defaults to 100 when omitted or `0`. Values above the cap are clamped, never rejected.
+	#[param(required = false, minimum = 1, maximum = 2000)]
 	pub limit: Option<u64>,
 
 	/// Opaque cursor copied from the previous page's `nextCursor`. Omit it to fetch the first page. Keep the filters identical across pages.
@@ -122,12 +137,12 @@ impl PageParams {
 	}
 }
 
-/// Clamp a requested limit into `[1, MAX_PAGE_LIMIT]`, substituting the default
+/// Clamp a requested limit into `[1, max_page_limit()]`, substituting the default
 /// for an absent or zero value. Out-of-range inputs are clamped, never rejected.
 pub fn clamp_limit(requested: Option<u64>) -> u64 {
 	match requested {
-		None | Some(0) => DEFAULT_PAGE_LIMIT,
-		Some(n) => n.min(MAX_PAGE_LIMIT),
+		None | Some(0) => default_page_limit(),
+		Some(n) => n.min(max_page_limit()),
 	}
 }
 
@@ -239,8 +254,8 @@ mod tests {
 
 	#[test]
 	fn clamp_limit_substitutes_default_for_absent_or_zero() {
-		assert_eq!(clamp_limit(None), DEFAULT_PAGE_LIMIT);
-		assert_eq!(clamp_limit(Some(0)), DEFAULT_PAGE_LIMIT);
+		assert_eq!(clamp_limit(None), default_page_limit());
+		assert_eq!(clamp_limit(Some(0)), default_page_limit());
 	}
 
 	#[test]
@@ -248,18 +263,18 @@ mod tests {
 		assert_eq!(clamp_limit(Some(1)), 1);
 		assert_eq!(clamp_limit(Some(25)), 25);
 		assert_eq!(clamp_limit(Some(50)), 50);
-		assert_eq!(clamp_limit(Some(51)), MAX_PAGE_LIMIT);
-		assert_eq!(clamp_limit(Some(u64::MAX)), MAX_PAGE_LIMIT);
+		assert_eq!(clamp_limit(Some(max_page_limit() + 1)), max_page_limit());
+		assert_eq!(clamp_limit(Some(u64::MAX)), max_page_limit());
 	}
 
 	#[test]
 	fn page_params_helpers_mirror_clamp_and_total_flag() {
 		let p = PageParams {
-			limit: Some(1000),
+			limit: Some(u64::MAX),
 			cursor: None,
 			with_total: Some(true),
 		};
-		assert_eq!(p.limit_clamped(), MAX_PAGE_LIMIT);
+		assert_eq!(p.limit_clamped(), max_page_limit());
 		assert!(p.wants_total());
 		assert!(!PageParams::default().wants_total());
 	}

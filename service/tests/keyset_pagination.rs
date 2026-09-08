@@ -3,7 +3,7 @@
 use migration::{Migrator, MigratorTrait};
 use sea_orm::prelude::Uuid;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, DbConn, EntityTrait, QueryFilter, Set};
-use service::db::pagination::fetch_keyset_page;
+use service::db::pagination::{fetch_keyset_page, max_page_limit};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
@@ -109,6 +109,11 @@ async fn after_seeks_past_the_previous_page() {
 
 #[tokio::test]
 async fn limit_is_clamped_to_max() {
+	// Override the configured cap so the test doesn't need to seed thousands of
+	// rows to exercise the clamp; `max_page_limit` reads the env var uncached.
+	unsafe {
+		std::env::set_var("MAX_PAGE_LIMIT", "50");
+	}
 	let (_pg, db) = start_pg().await;
 	seed_groups(&db, 55).await;
 
@@ -122,6 +127,10 @@ async fn limit_is_clamped_to_max() {
 	let page = fetch_keyset_page(&mut cursor, Some(1000), &db)
 		.await
 		.unwrap();
-	assert_eq!(page.rows.len(), 50, "limit above the cap is clamped to 50");
+	assert_eq!(
+		page.rows.len() as u64,
+		max_page_limit(),
+		"limit above the cap is clamped to the configured max"
+	);
 	assert!(page.has_more, "five rows remain beyond the clamped page");
 }

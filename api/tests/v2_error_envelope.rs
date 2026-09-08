@@ -210,6 +210,13 @@ async fn v2_wrong_method_answers_json_envelope() {
 
 #[actix_web::test]
 async fn v2_rate_limit_429_answers_json_envelope() {
+	// Override the configured burst so the test doesn't need hundreds of
+	// requests to trip the limiter; the governor config reads these env vars
+	// uncached at build time.
+	unsafe {
+		std::env::set_var("RATE_LIMIT_BURST_SIZE", "20");
+		std::env::set_var("RATE_LIMIT_MS_PER_REQUEST", "250");
+	}
 	let (_pg, db) = start_pg().await;
 	let (_redis, redis) = start_redis().await;
 	let app = test::init_service(build_app!(db, redis)).await;
